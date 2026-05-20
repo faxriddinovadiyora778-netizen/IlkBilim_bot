@@ -14,11 +14,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_ID = 8016799878
 
-CHANNELS = [
-    {"name": "Ilk Bilim", "link": "https://t.me/+aN43lpwgyEU5NThi"},
-    {"name": "Pedagoglar", "username": "@pedagoglar1226", "link": "https://t.me/pedagoglar1226"},
-]
+file_storage = {}
 
 DARSLIKLAR = {
     "1-sinf": [
@@ -130,7 +128,7 @@ def main_kb():
         ["📚 Maktab darsliklari", "📖 Badiiy kitoblar"],
         ["📋 Pedagogik qo'llanmalar"],
         ["🖼️ Rasm tahrirlash", "📄 PDF yasash"],
-        ["📝 Word yasash"],
+        ["📝 Word yasash", "💬 Fikr qoldirish"],
     ], resize_keyboard=True)
 
 def back_kb():
@@ -143,6 +141,14 @@ def sinf_kb():
         ["9-sinf", "10-sinf", "11-sinf"],
         ["🔙 Orqaga"]
     ], resize_keyboard=True)
+
+def kitoblar_kb(sinf):
+    kitoblar = DARSLIKLAR.get(sinf, [])
+    rows = []
+    for i in range(0, len(kitoblar), 2):
+        rows.append(kitoblar[i:i+2])
+    rows.append(["🔙 Orqaga"])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 def kitob_kb():
     return ReplyKeyboardMarkup([
@@ -159,15 +165,16 @@ def ped_kb():
     ], resize_keyboard=True)
 
 def pdf_kb():
-    return ReplyKeyboardMarkup([
-        ["✅ Tayyor, PDF qil"],
-        ["🔙 Orqaga"]
-    ], resize_keyboard=True)
+    return ReplyKeyboardMarkup([["✅ Tayyor, PDF qil"], ["🔙 Orqaga"]], resize_keyboard=True)
 
 def word_kb():
+    return ReplyKeyboardMarkup([["✅ Tayyor, Word qil"], ["🔙 Orqaga"]], resize_keyboard=True)
+
+def admin_kb():
     return ReplyKeyboardMarkup([
-        ["✅ Tayyor, Word qil"],
-        ["🔙 Orqaga"]
+        ["📤 Kitob yuklash", "📋 Yuklangan kitoblar"],
+        ["📨 Xabar yuborish"],
+        ["🔙 Chiqish"]
     ], resize_keyboard=True)
 
 async def check_sub(user_id, bot):
@@ -181,6 +188,10 @@ async def check_sub(user_id, bot):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    if user.id == ADMIN_ID:
+        context.user_data.clear()
+        await update.message.reply_text("👑 Admin paneliga xush kelibsiz!", reply_markup=admin_kb())
+        return
     subbed = await check_sub(user.id, context.bot)
     if not subbed:
         kb = InlineKeyboardMarkup([
@@ -210,18 +221,92 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.answer("❌ Hali obuna bo'lmadingiz!", show_alert=True)
 
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        return
+    mode = context.user_data.get("mode")
+    if mode == "admin_yuklash":
+        nom = context.user_data.get("kitob_nom", "")
+        if not nom:
+            await update.message.reply_text("❌ Avval kitob nomini yozing!")
+            return
+        doc = update.message.document
+        file_storage[nom] = doc.file_id
+        await update.message.reply_text(
+            f"✅ '{nom}' saqlandi!\nJami: {len(file_storage)} ta kitob",
+            reply_markup=admin_kb()
+        )
+        context.user_data.clear()
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or ""
+    user = update.effective_user
     mode = context.user_data.get("mode", "main")
 
-    subbed = await check_sub(update.effective_user.id, context.bot)
+    # ADMIN
+    if user.id == ADMIN_ID:
+        if text == "🔙 Chiqish":
+            context.user_data.clear()
+            await update.message.reply_text("Admin panel:", reply_markup=admin_kb())
+            return
+        if text == "📤 Kitob yuklash":
+            context.user_data["mode"] = "admin_nom"
+            await update.message.reply_text(
+                "Kitob nomini yozing:\n(Masalan: 1-sinf Matematika 1-qism)",
+                reply_markup=back_kb()
+            )
+            return
+        if text == "📋 Yuklangan kitoblar":
+            if not file_storage:
+                await update.message.reply_text("📋 Hali kitob yuklanmagan!", reply_markup=admin_kb())
+            else:
+                msg = "📋 Yuklangan kitoblar:\n\n"
+                for i, nom in enumerate(file_storage.keys(), 1):
+                    msg += f"{i}. {nom}\n"
+                await update.message.reply_text(msg, reply_markup=admin_kb())
+            return
+        if text == "📨 Xabar yuborish":
+            context.user_data["mode"] = "admin_xabar"
+            await update.message.reply_text(
+                "📨 Foydalanuvchilarga yuboriladigan xabarni yozing:",
+                reply_markup=back_kb()
+            )
+            return
+        if mode == "admin_nom":
+            context.user_data["kitob_nom"] = text
+            context.user_data["mode"] = "admin_yuklash"
+            await update.message.reply_text(
+                f"✅ Nom: '{text}'\nEndi PDF faylni yuboring:",
+                reply_markup=back_kb()
+            )
+            return
+        if mode == "admin_xabar":
+            await update.message.reply_text("⏳ Xabar yuborilmoqda...")
+            await update.message.reply_text(
+                f"✅ Xabar yuborildi!\n\nMazмun:\n{text}",
+                reply_markup=admin_kb()
+            )
+            context.user_data.clear()
+            return
+        if text == "🔙 Orqaga":
+            context.user_data.clear()
+            await update.message.reply_text("Admin panel:", reply_markup=admin_kb())
+            return
+
+    # FOYDALANUVCHI
+    subbed = await check_sub(user.id, context.bot)
     if not subbed:
         await update.message.reply_text("❌ Avval kanallarga obuna bo'ling! /start")
         return
 
     if text == "🔙 Orqaga":
-        context.user_data.clear()
-        await update.message.reply_text("Asosiy menyu:", reply_markup=main_kb())
+        if mode == "kitob_list":
+            context.user_data["mode"] = "darsliklar"
+            await update.message.reply_text("📚 Sinfni tanlang:", reply_markup=sinf_kb())
+        else:
+            context.user_data.clear()
+            await update.message.reply_text("Asosiy menyu:", reply_markup=main_kb())
         return
 
     if text == "📚 Maktab darsliklari":
@@ -248,7 +333,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["mode"] = "pdf"
         context.user_data["pdf_images"] = []
         await update.message.reply_text(
-            "📄 Rasmlarni yuboring.\nHamma rasmni yuborgach '✅ Tayyor, PDF qil' bosing:",
+            "📄 Rasmlarni yuboring.\nTugagach '✅ Tayyor, PDF qil' bosing:",
             reply_markup=pdf_kb()
         )
         return
@@ -262,15 +347,57 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # DARSLIKLAR
-    if mode == "darsliklar" and text in DARSLIKLAR:
-        kitoblar = DARSLIKLAR[text]
-        msg = f"📚 {text} darsliklari:\n\n"
-        for i, k in enumerate(kitoblar, 1):
-            msg += f"{i}. {k}\n"
-        msg += "\n📥 Yuklash uchun: @pedagoglar1226"
-        await update.message.reply_text(msg, reply_markup=sinf_kb())
+    if text == "💬 Fikr qoldirish":
+        context.user_data["mode"] = "fikr"
+        await update.message.reply_text(
+            "💬 Fikringizni yozing, adminга yetkazamiz:",
+            reply_markup=back_kb()
+        )
         return
+
+    # FIKR
+    if mode == "fikr":
+        user_info = f"@{user.username}" if user.username else user.first_name
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"💬 Yangi fikr!\n\n👤 Foydalanuvchi: {user_info} (ID: {user.id})\n\n📝 Fikr:\n{text}"
+        )
+        await update.message.reply_text(
+            "✅ Fikringiz adminga yetkazildi! Rahmat!",
+            reply_markup=main_kb()
+        )
+        context.user_data.clear()
+        return
+
+    # SINF TANLANDI
+    if mode == "darsliklar" and text in DARSLIKLAR:
+        context.user_data["mode"] = "kitob_list"
+        context.user_data["sinf"] = text
+        await update.message.reply_text(
+            f"📚 {text} — kitobni tanlang:",
+            reply_markup=kitoblar_kb(text)
+        )
+        return
+
+    # KITOB TANLANDI
+    if mode == "kitob_list":
+        sinf = context.user_data.get("sinf", "")
+        kitoblar = DARSLIKLAR.get(sinf, [])
+        if text in kitoblar:
+            storage_key = f"{sinf} {text}"
+            if storage_key in file_storage:
+                await update.message.reply_text(f"📥 '{text}' yuklanmoqda...")
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=file_storage[storage_key],
+                    caption=f"📚 {sinf} | {text}"
+                )
+            else:
+                await update.message.reply_text(
+                    f"📚 {sinf} | {text}\n\n⏳ Bu kitob hali yuklanmagan.\n📥 So'rash uchun: @pedagoglar1226",
+                    reply_markup=kitoblar_kb(sinf)
+                )
+            return
 
     # KITOBLAR
     if mode == "kitoblar" and text in ["Roman", "Hikoya", "She'riyat", "Dunyo adabiyoti", "O'zbek adabiyoti"]:
@@ -288,7 +415,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # PDF TAYYOR
+    # PDF
     if text == "✅ Tayyor, PDF qil" and mode == "pdf":
         images = context.user_data.get("pdf_images", [])
         if not images:
@@ -308,7 +435,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for img_bytes in images:
             img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
             iw, ih = img.size
-            ratio = min(pw / iw, ph / ih) * 0.95
+            ratio = min(pw/iw, ph/ih) * 0.95
             tmp = io.BytesIO()
             img.save(tmp, format="JPEG")
             tmp.seek(0)
@@ -322,7 +449,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Asosiy menyu:", reply_markup=main_kb())
         return
 
-    # WORD TAYYOR
+    # WORD
     if text == "✅ Tayyor, Word qil" and mode == "word":
         items = context.user_data.get("word_items", [])
         if not items:
@@ -344,8 +471,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 p.style.font.size = Pt(12)
             elif item["type"] == "image":
                 try:
-                    img_buf = io.BytesIO(item["content"])
-                    doc.add_picture(img_buf, width=Inches(5))
+                    doc.add_picture(io.BytesIO(item["content"]), width=Inches(5))
                 except:
                     doc.add_paragraph("[Rasm]")
         buf = io.BytesIO()
@@ -357,20 +483,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Asosiy menyu:", reply_markup=main_kb())
         return
 
-    # WORD — matn qo'shish
     if mode == "word" and text:
         items = context.user_data.get("word_items", [])
         items.append({"type": "text", "content": text})
         context.user_data["word_items"] = items
-        await update.message.reply_text(
-            f"✅ Matn qo'shildi! Jami: {len(items)} ta element",
-            reply_markup=word_kb()
-        )
+        await update.message.reply_text(f"✅ Matn qo'shildi! Jami: {len(items)} ta", reply_markup=word_kb())
         return
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    subbed = await check_sub(update.effective_user.id, context.bot)
-    if not subbed:
+    user = update.effective_user
+    subbed = await check_sub(user.id, context.bot)
+    if not subbed and user.id != ADMIN_ID:
         await update.message.reply_text("❌ Avval kanallarga obuna bo'ling! /start")
         return
 
@@ -395,20 +518,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         images = context.user_data.get("pdf_images", [])
         images.append(file_bytes)
         context.user_data["pdf_images"] = images
-        await update.message.reply_text(
-            f"✅ Rasm qo'shildi! Jami: {len(images)} ta rasm",
-            reply_markup=pdf_kb()
-        )
+        await update.message.reply_text(f"✅ Rasm qo'shildi! Jami: {len(images)} ta", reply_markup=pdf_kb())
         return
 
     if mode == "word":
         items = context.user_data.get("word_items", [])
         items.append({"type": "image", "content": file_bytes})
         context.user_data["word_items"] = items
-        await update.message.reply_text(
-            f"✅ Rasm qo'shildi! Jami: {len(items)} ta element",
-            reply_markup=word_kb()
-        )
+        await update.message.reply_text(f"✅ Rasm qo'shildi! Jami: {len(items)} ta", reply_markup=word_kb())
         return
 
     await update.message.reply_text("Asosiy menyudan bo'lim tanlang:", reply_markup=main_kb())
@@ -417,6 +534,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Bot ishga tushdi!")
