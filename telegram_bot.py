@@ -1,3 +1,4 @@
+# IlkBilim Bot v3.0
 import logging
 import os
 import io
